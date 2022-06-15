@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 12
+  pre_build:
+    commands:
+      - npm install
+  build:
+    commands:
+      - npx tsc
+      - sam build
+  post_build:
+    commands:
+      - sam package -t template.yaml --s3-bucket artifact-output-vuongnd9 --output-template-file package.yml
+artifacts:
+  files:
+    - package.yml

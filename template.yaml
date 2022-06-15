@@ -1,0 +1,587 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Products-API
+
+Globals:
+  Function:
+    Timeout: 29
+    Handler: index.handler
+    Runtime: nodejs14.x
+    Layers:
+      - !Ref MyLayer
+    Architectures:
+      - x86_64
+
+Resources:
+  UserPoolServerless:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: UserPoolServerless
+      UsernameConfiguration:
+        CaseSensitive: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: false
+          Required: true
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireSymbols: true
+          RequireNumbers: true
+          MinimumLength: 8
+
+  AppClientServerless:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: AppClientServerless
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 60
+      ReadAttributes:
+        - email
+        - custom:role
+      WriteAttributes:
+        - email
+        - custom:role
+      ExplicitAuthFlows:
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      GenerateSecret: false
+      UserPoolId: !Ref UserPoolServerless
+
+  MockBucketS3:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: mys3bucketseverless-vuongnd9
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            Function: !GetAtt ProductThumbnailCreate.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: image/
+
+  S3InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref ProductThumbnailCreate
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::mys3bucketseverless-vuongnd9
+#region DynamoDb Tables
+  CategoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CategoryTable
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+
+  ProductTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ProductTable
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+
+  OrderTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: OrderTable
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+#endregion
+
+  CrudApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+
+  S3Policy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: S3Policy
+      Roles:
+        - !Ref CrudApiRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+            Resource: "*"
+
+  DynamoDBPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: DynamoDBPolicy
+      Roles:
+        - !Ref CrudApiRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Scan
+              - dynamodb:Query
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource: "*"
+
+  MyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: nodejs.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs14.x
+
+  MockApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: MockApiGateway
+      StageName: audit
+      Auth:
+        Authorizers:
+          Authorization:
+            UserPoolArn: !GetAtt UserPoolServerless.Arn
+
+
+
+#region Category
+  CategoryGetAll:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CATEGORY_TABLE: !Ref CategoryTable
+      CodeUri: dist/CategoryGetAll/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        GetProducts:
+          Type: Api
+          Properties:
+            Path: /categories
+            Method: get
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  CategoryGetById:
+      Type: AWS::Serverless::Function
+      Properties:
+        Environment:
+          Variables:
+            CATEGORY_TABLE: !Ref CategoryTable
+        CodeUri: dist/CategoryGetById/
+        Role: !GetAtt CrudApiRole.Arn
+        Events:
+          GetProduct:
+            Type: Api
+            Properties:
+              Path: /categories/{id}
+              Method: get
+              RestApiId: !Ref MockApiGateway
+              Auth:
+                Authorizer: Authorization
+
+  CategoryCreate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CATEGORY_TABLE: !Ref CategoryTable
+      CodeUri: dist/CategoryCreate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        PostProduct:
+          Type: Api
+          Properties:
+            Path: /categories
+            Method: post
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  CategoryUpdate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CATEGORY_TABLE: !Ref CategoryTable
+      CodeUri: dist/CategoryUpdate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        PutProduct:
+          Type: Api
+          Properties:
+            Path: /categories/{id}
+            Method: put
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  CategoryDelete:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CATEGORY_TABLE: !Ref CategoryTable
+      CodeUri: dist/CategoryDelete/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        DelProduct:
+          Type: Api
+          Properties:
+            Path: /categories/{id}
+            Method: delete
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+#endregion
+
+#region Product
+  ProductGetAll:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+          S3_BUCKET: !Ref MockBucketS3
+      CodeUri: dist/ProductGetAll/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        GetProducts:
+          Type: Api
+          Properties:
+            Path: /products
+            Method: get
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductGetById:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+          S3_BUCKET: !Ref MockBucketS3
+      CodeUri: dist/ProductGetById/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        GetProduct:
+          Type: Api
+          Properties:
+            Path: /products/{id}
+            Method: get
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductCreate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+          CATEGORY_TABLE: !Ref CategoryTable
+          S3_BUCKET: !Ref MockBucketS3
+      CodeUri: dist/ProductCreate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        PostProduct:
+          Type: Api
+          Properties:
+            Path: /products
+            Method: post
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductUpdate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+          CATEGORY_TABLE: !Ref CategoryTable
+      CodeUri: dist/ProductUpdate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        PutProduct:
+          Type: Api
+          Properties:
+            Path: /products/{id}
+            Method: put
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductDelete:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+      CodeUri: dist/ProductDelete/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        DelProduct:
+          Type: Api
+          Properties:
+            Path: /products/{id}
+            Method: delete
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductImageCreate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+          S3_BUCKET: !Ref MockBucketS3
+      CodeUri: dist/ProductImageCreate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /images/{id}
+            Method: put
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  ProductThumbnailCreate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          PRODUCT_TABLE: !Ref ProductTable
+      CodeUri: dist/ProductThumbnailCreate/
+      Role: !GetAtt CrudApiRole.Arn
+#endregion
+
+#region Order
+
+  OrderGetAll:
+      Type: AWS::Serverless::Function
+      Properties:
+        Environment:
+          Variables:
+            ORDER_TABLE: !Ref OrderTable
+        CodeUri: dist/OrderGetAll/
+        Role: !GetAtt CrudApiRole.Arn
+        Events:
+          GetProducts:
+            Type: Api
+            Properties:
+              Path: /orders
+              Method: get
+              RestApiId: !Ref MockApiGateway
+              Auth:
+                Authorizer: Authorization
+
+  OrderGetById:
+      Type: AWS::Serverless::Function
+      Properties:
+        Environment:
+          Variables:
+            ORDER_TABLE: !Ref OrderTable
+        CodeUri: dist/OrderGetById/
+        Role: !GetAtt CrudApiRole.Arn
+        Events:
+          GetProduct:
+            Type: Api
+            Properties:
+              Path: /orders/{id}
+              Method: get
+              RestApiId: !Ref MockApiGateway
+              Auth:
+                Authorizer: Authorization
+
+  OrderCreate:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          ORDER_TABLE: !Ref OrderTable
+          PRODUCT_TABLE: !Ref ProductTable
+      CodeUri: dist/OrderCreate/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        PostProduct:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: post
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+  OrderDelete:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          ORDER_TABLE: !Ref OrderTable
+      CodeUri: dist/OrderDelete/
+      Role: !GetAtt CrudApiRole.Arn
+      Events:
+        DelProduct:
+          Type: Api
+          Properties:
+            Path: /orders/{id}
+            Method: delete
+            RestApiId: !Ref MockApiGateway
+            Auth:
+              Authorizer: Authorization
+
+#endregion
+
+#region Cognito 
+  SignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+      CodeUri: dist/SignUp/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /signup
+            Method: post
+            RestApiId: !Ref MockApiGateway
+
+  PasswordChange:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+      CodeUri: dist/PasswordChange/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /changepassword
+            Method: post
+            RestApiId: !Ref MockApiGateway
+  
+  PasswordForgot:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+      CodeUri: dist/PasswordForgot/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /forgotpassword
+            Method: post
+            RestApiId: !Ref MockApiGateway
+  
+  PasswordForgotConfirm:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+      CodeUri: dist/PasswordForgotConfirm/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /forgotpassword/confirm
+            Method: post
+            RestApiId: !Ref MockApiGateway
+
+  SignUpConfirm:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+      CodeUri: dist/SignUpConfirm/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /signup/confirm
+            Method: post
+            RestApiId: !Ref MockApiGateway
+
+  LogInFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          CLIENT_ID: !Ref AppClientServerless
+          AUTH_FLOW: USER_PASSWORD_AUTH
+      CodeUri: dist/SignIn/
+      Events:
+        SignUp:
+          Type: Api
+          Properties:
+            Path: /signin
+            Method: post
+            RestApiId: !Ref MockApiGateway
+#endregion
+

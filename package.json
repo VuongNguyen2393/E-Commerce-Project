@@ -1,0 +1,29 @@
+{
+  "name": "mock_project_vuongnd9",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "pipeline": "aws cloudformation deploy --template-file pipeline-template.yaml --stack-name Mock-CICD-VuongND9 --s3-bucket pipeline-template-bucket-vuongnd9 --capabilities CAPABILITY_NAMED_IAM"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "amazon-cognito-identity-js": "^5.2.3",
+    "aws-lambda": "^1.0.7",
+    "aws-sdk": "^2.1050.0",
+    "joi": "^17.5.0",
+    "sharp": "^0.29.3",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.89",
+    "@types/node": "^17.0.8",
+    "@types/sharp": "^0.29.5",
+    "@types/uuid": "^8.3.3",
+    "node-fetch": "^3.1.0",
+    "ts-node": "^10.4.0",
+    "typescript": "^4.5.4"
+  }
+}
